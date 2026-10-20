@@ -1,0 +1,116 @@
+{
+  "dataset": "pminervini/HaluEval",
+  "dataset_config": "qa",
+  "dataset_split_used": "data",
+  "model_name": "distilgpt2",
+  "device": "cpu",
+  "n_source_pairs": 50,
+  "n_candidates": 100,
+  "seed": 42,
+  "max_length": 512,
+  "split_counts_pairs": {
+    "test": 10,
+    "train": 30,
+    "validation": 10
+  },
+  "predictors": {
+    "mean_token_nll": {
+      "validation_threshold_selection": {
+        "threshold": 1.1594990491867065,
+        "f1": 0.6896551724137931,
+        "precision": 0.5263157894736842,
+        "recall": 1.0,
+        "confusion_matrix_tn_fp_fn_tp": [
+          [
+            1,
+            9
+          ],
+          [
+            0,
+            10
+          ]
+        ]
+      },
+      "test": {
+        "n": 20,
+        "positive_rate": 0.5,
+        "auroc": 0.47000000000000003,
+        "auprc": 0.4780176767676768,
+        "threshold": 1.1594990491867065,
+        "f1": 0.6086956521739131,
+        "precision": 0.5384615384615384,
+        "recall": 0.7,
+        "confusion_matrix_tn_fp_fn_tp": [
+          [
+            4,
+            6
+          ],
+          [
+            3,
+            7
+          ]
+        ]
+      }
+    },
+    "max_token_nll": {
+      "validation_threshold_selection": {
+        "threshold": 3.691347599029541,
+        "f1": 0.6896551724137931,
+        "precision": 0.5263157894736842,
+        "recall": 1.0,
+        "confusion_matrix_tn_fp_fn_tp": [
+          [
+            1,
+            9
+          ],
+          [
+            0,
+            10
+          ]
+        ]
+      },
+      "test": {
+        "n": 20,
+        "positive_rate": 0.5,
+        "auroc": 0.7299999999999999,
+        "auprc": 0.8401315789473683,
+        "threshold": 3.691347599029541,
+        "f1": 0.5925925925925926,
+        "precision": 0.47058823529411764,
+        "recall": 0.8,
+        "confusion_matrix_tn_fp_fn_tp": [
+          [
+            1,
+            9
+          ],
+          [
+            2,
+            8
+          ]
+        ]
+      }
+    }
+  },
+  "note": "Metrics are against HaluEval paired labels; NLL is not a direct probability of truth.",
+  "paired_descriptive_analysis": {
+    "mean_token_nll_hallucinated_minus_reference": {
+      "mean": -1.125524535179138,
+      "median": -0.6547983288764954,
+      "fraction_positive": 0.4,
+      "n_pairs": 50
+    },
+    "max_token_nll_hallucinated_minus_reference": {
+      "mean": 0.9595351392030715,
+      "median": 1.398221492767334,
+      "fraction_positive": 0.62,
+      "n_pairs": 50
+    },
+    "response_words_hallucinated_minus_reference": {
+      "mean": 8.96,
+      "median": 8.5,
+      "fraction_positive": 0.96,
+      "n_pairs": 50
+    }
+  },
+  "runtime_seconds": 56.62
+}
