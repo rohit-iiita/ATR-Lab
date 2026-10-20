@@ -1,0 +1,719 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{cite}
+\usepackage{hyperref}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.5\baselineskip}
+
+\title{Token-Level Uncertainty as a Predictor of Hallucinations in Large Language Models}
+
+\author{
+  Rohit Mondal\\
+  {M.tech IT (Software Engineering and Automation)}\\
+  \texttt{mse2026013@iiita.ac.in}
+}
+
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Large language models (LLMs) generate fluent and useful text but can also produce statements that are factually unsupported, contradictory to available evidence, or entirely fabricated. These failures, commonly described as hallucinations, present a central obstacle to reliable deployment of LLMs in knowledge-intensive and high-stakes applications. A promising line of research treats the probability distribution generated at each decoding step as a source of uncertainty information. This paper examines the proposition that token-level uncertainty can serve as a predictor and localizer of hallucinations in LLM-generated text. Token-level uncertainty can be quantified using measures such as negative log-likelihood, predictive entropy, probability margins, variance across stochastic generations, or related conditional-probability measures. The central hypothesis is that hallucinated content is often associated with increased uncertainty or instability during generation, particularly at the tokens that initiate unsupported factual claims. However, the relationship is neither deterministic nor universal: common words, syntactic transitions, rare entities, and semantically equivalent alternative phrasings can also produce high token uncertainty, while models can generate false statements with high confidence. Recent work demonstrates both the promise and limitations of token-level approaches. Claim-conditioned probability substantially improves uncertainty-based factuality detection, while studies of entity-level hallucination show that na\"ive individual-token probabilities tend to over-predict hallucinations. Semantic entropy, self-consistency methods, internal-state representations, and calibration techniques therefore provide important complementary perspectives. The paper argues that token-level uncertainty should be understood not as a direct measure of truth, but as a predictive signal whose value increases when it is contextualized, aggregated, calibrated, and evaluated at appropriate linguistic units. It identifies research gaps concerning causal interpretation, cross-model calibration, temporal localization of hallucination onset, multimodal and multilingual generalization, and integration with retrieval-augmented generation. A research agenda is proposed for developing calibrated, context-aware, token-level hallucination predictors capable of real-time detection and intervention.
+\end{abstract}
+
+\noindent\textbf{Keywords:}
+large language models; hallucination detection; token-level uncertainty;
+predictive entropy; log probability; calibration; factuality;
+semantic uncertainty; uncertainty quantification; confidence estimation
+
+% ============================================================
+\section{Introduction}
+\label{sec:introduction}
+% ============================================================
+
+Large language models have transformed natural-language generation by learning statistical regularities over enormous corpora and subsequently adapting them to instruction following, question answering, reasoning, summarization, and knowledge-intensive tasks. Yet fluency does not guarantee factual correctness. LLMs can generate plausible statements that are unsupported by their context or by reliable external evidence, including fabricated entities, citations, events, numerical values, and explanations. Such outputs are commonly called hallucinations. Surveys distinguish several forms of hallucination, including conflicts with an input source, unsupported claims, and factual errors arising from limitations of model knowledge or generation processes \cite{huang2024}.
+
+The problem is particularly significant because hallucinations may be expressed with high linguistic confidence. TruthfulQA demonstrated that models can reproduce common human misconceptions rather than reliably distinguish truth from plausibility \cite{lin2022}. Similarly, HaluEval showed that LLMs themselves can have difficulty recognizing hallucinated content, suggesting that generation and verification are not equivalent capabilities \cite{li2023}.
+
+An important question is therefore whether the model's own probabilistic output contains signals that indicate when a generation is unreliable. Autoregressive LLMs generate a sequence token by token according to
+
+\begin{equation}
+P(y_{1:T}\mid x)
+=
+\prod_{t=1}^{T}
+P(y_t\mid x,y_{<t}),
+\label{eq:sequence-probability}
+\end{equation}
+
+where $x$ is the input, $y_t$ is the token generated at position $t$, and $y_{<t}$ denotes preceding output tokens. At each step, the model produces a probability distribution over its vocabulary. The distribution can therefore be interpreted as a source of predictive uncertainty.
+
+Common measures include token negative log-likelihood (NLL),
+
+\begin{equation}
+\mathrm{NLL}_t
+=
+-\log P(y_t\mid x,y_{<t}),
+\label{eq:nll}
+\end{equation}
+
+and predictive entropy,
+
+\begin{equation}
+H_t
+=
+-\sum_{v\in V}
+P(v\mid x,y_{<t})
+\log P(v\mid x,y_{<t}),
+\label{eq:entropy}
+\end{equation}
+
+where $V$ denotes the vocabulary.
+
+The research question addressed in this paper is:
+
+\begin{quote}
+To what extent can token-level uncertainty predict, localize, and characterize hallucinations in large language model outputs?
+\end{quote}
+
+The literature increasingly supports a qualified answer. Token-level uncertainty contains useful information about factual reliability, and recent work explicitly demonstrates its value for hallucination detection and fact checking \cite{fadeeva2024}. Nevertheless, token uncertainty is not synonymous with epistemic uncertainty or truthfulness. A token may have low probability because it is lexically unusual while still being factually correct; conversely, a model may assign high probability to a familiar but false association.
+
+This distinction motivates the principal argument of this paper: token-level uncertainty is best regarded as a predictive feature of hallucination rather than a direct probability of factual error. Its effectiveness depends on how the signal is defined, conditioned, aggregated, calibrated, and evaluated.
+
+% ============================================================
+\section{Background and Related Work}
+\label{sec:related-work}
+% ============================================================
+
+\subsection{Hallucination as a Reliability Problem}
+\label{sec:hallucination-reliability}
+
+Hallucination research predates contemporary LLMs, particularly in neural machine translation and abstractive summarization, but LLMs introduce new difficulties because their outputs are open-ended and may contain mixtures of factual and fabricated material. Huang et al. provide a broad taxonomy covering hallucination causes, detection, mitigation, and evaluation, emphasizing that hallucination can arise at multiple stages of model development and inference \cite{huang2024}.
+
+Factuality evaluation has consequently become more fine-grained. FActScore decomposes long-form generation into atomic factual claims and measures the fraction supported by a reliable knowledge source \cite{min2023}. This is important for uncertainty research because a response can be largely correct while containing a small number of hallucinated claims. A response-level binary label may therefore obscure the local relationship between uncertainty and factual error.
+
+RAGTruth further advances this direction by providing nearly 18,000 naturally generated retrieval-augmented responses with manual annotations at both case and word levels, enabling evaluation of hallucination detection at a substantially finer granularity \cite{niu2024}.
+
+\subsection{Confidence and Self-Knowledge}
+\label{sec:confidence}
+
+The connection between model confidence and correctness has been investigated independently of hallucination detection. Kadavath et al. showed that sufficiently capable language models can estimate the probability that an answer is correct through quantities such as $P(\mathrm{True})$, and can also estimate whether they ``know'' an answer through $P(\mathrm{IK})$ \cite{kadavath2022}. However, the calibration of such self-assessments can deteriorate when models are transferred to new tasks.
+
+This work establishes an important conceptual distinction. A model can possess a useful internal signal related to correctness without that signal being perfectly calibrated. Consequently, uncertainty should be evaluated empirically against observed factual correctness rather than interpreted literally as a probability of truth.
+
+Calibration is a longstanding issue in neural prediction. Guo et al. demonstrated that modern neural networks may be poorly calibrated despite strong predictive accuracy, while simple temperature scaling can substantially improve calibration in many settings \cite{guo2017}. The same principle is highly relevant to LLM token probabilities: a token assigned probability 0.9 should not automatically be interpreted as having a 90\% probability of being factually correct.
+
+\subsection{Semantic Uncertainty}
+\label{sec:semantic-uncertainty}
+
+A major limitation of token-level uncertainty is that language admits many semantically equivalent realizations. For example, ``Paris is the capital of France'' and ``France's capital is Paris'' express essentially the same proposition while producing different token sequences.
+
+Kuhn, Gal, and Farquhar introduced semantic entropy to address this issue. Instead of treating every lexical sequence as distinct, semantic entropy groups generations according to meaning and estimates uncertainty over semantic alternatives \cite{kuhn2023}. Their experiments found semantic uncertainty to be more predictive of question-answering accuracy than several token- or sequence-level baselines.
+
+Farquhar et al. subsequently demonstrated that semantic entropy can detect a class of hallucinations termed confabulations: arbitrary incorrect answers arising when the model lacks reliable knowledge. Their method achieved strong performance without task-specific training and generalized across datasets and tasks \cite{farquhar2024}.
+
+Semantic entropy therefore represents an important theoretical challenge to a purely token-level account. Token probabilities describe uncertainty about how to express an answer, whereas semantic uncertainty attempts to capture uncertainty about what answer or proposition is being expressed.
+
+% ============================================================
+\section{Token-Level Uncertainty as a Hallucination Signal}
+\label{sec:token-hallucination}
+% ============================================================
+
+\subsection{What Token Uncertainty Measures}
+\label{sec:token-measures}
+
+For an autoregressive model, token-level uncertainty can be represented in several ways, as discussed in Section~\ref{sec:introduction}.
+
+Negative log-likelihood (NLL) measures how surprising the selected token is. High NLL means the chosen token was relatively improbable under the model's predictive distribution, as shown in Equation~\ref{eq:nll}.
+
+Predictive entropy measures the overall dispersion of probability mass. Unlike NLL, entropy considers the entire distribution rather than only the selected token, as shown in Equation~\ref{eq:entropy}.
+
+Probability margin can quantify the difference between the highest- and second-highest-probability candidates:
+
+\begin{equation}
+M_t
+=
+P_{(1),t}-P_{(2),t},
+\label{eq:margin}
+\end{equation}
+
+where $P_{(1),t}$ and $P_{(2),t}$ are the highest and second-highest token probabilities at position $t$. A small margin indicates competing alternatives.
+
+Variance-based uncertainty estimates instability across stochastic generations or perturbed model states. This is related to recent work using token-log-probability variance as a reference-free hallucination signal \cite{kumar2025}.
+
+These measures capture different phenomena. Entropy represents uncertainty in the predictive distribution; NLL represents the surprise of the realized token; variance captures instability across repeated predictions. They should therefore not be treated as interchangeable.
+
+\subsection{Why Hallucinations May Produce Elevated Uncertainty}
+\label{sec:elevated-uncertainty}
+
+Suppose an LLM is asked for the birthplace of a relatively obscure person. If the model lacks reliable knowledge, it may distribute probability among several candidate locations. The eventual sampled answer could therefore occur at a point where predictive uncertainty is high. If this pattern systematically precedes false claims, token-level uncertainty can act as an early warning signal.
+
+The hypothesis is especially plausible for knowledge-boundary hallucinations. When the model does not possess sufficiently reliable evidence, uncertainty may rise as it constructs a factual proposition. Farquhar et al. provide evidence for this general principle at the semantic level, while Fadeeva et al. demonstrate that token-level uncertainty can be operationalized for fact checking \cite{farquhar2024,fadeeva2024}.
+
+However, the relationship is more complex than ``high entropy equals hallucination.'' The token ``the'' may be highly predictable but semantically uninformative, while a rare but perfectly factual proper noun may have low probability simply because of its lexical rarity. Consequently, the predictive value of uncertainty depends strongly on where the token occurs and what linguistic function it serves.
+
+\subsection{Claim-Conditioned Probability}
+\label{sec:claim-conditioned}
+
+Fadeeva et al. make this distinction explicit through Claim Conditioned Probability (CCP). Their motivation is that conventional token uncertainty combines two different uncertainties: uncertainty about which claim to make and uncertainty about how to express that claim. CCP attempts to isolate the uncertainty associated with the value of a particular factual claim \cite{fadeeva2024}.
+
+This distinction is crucial. Consider:
+
+\begin{quote}
+Marie Curie was born in [Warsaw].
+\end{quote}
+
+The probability of Warsaw can be affected by many linguistic factors. A model may be uncertain about the exact wording but highly certain about the underlying proposition. Conditioning the probability calculation on the claim reduces this confounding effect.
+
+In experiments involving biography generation across seven LLMs and four languages, Fadeeva et al. reported substantial improvements for CCP relative to conventional uncertainty baselines \cite{fadeeva2024}.
+
+Thus, the most promising direction is not simply ``more token entropy,'' but better decomposition of token uncertainty into epistemically meaningful components.
+
+% ============================================================
+\section{Empirical Evidence for Token-Level Prediction}
+\label{sec:empirical-evidence}
+% ============================================================
+
+\subsection{Direct Token-Probability Approaches}
+\label{sec:direct-token}
+
+Quevedo et al. developed a supervised hallucination detector based on numerical features derived from tokens and vocabulary probabilities. Their work demonstrated that relatively simple probability-derived features can provide useful hallucination detection across multiple benchmarks and tasks \cite{quevedo2025}.
+
+The importance of this result is methodological. It suggests that useful hallucination information may already exist in the model's predictive distribution and need not always require an external fact-checking system, another large LLM, or complex linguistic representations.
+
+At the same time, their supervised formulation illustrates a limitation: raw uncertainty may be insufficient, whereas a learned combination of several probability features can capture nonlinear relationships between token behavior and hallucination labels.
+
+\subsection{Claim-Level and Word-Level Detection}
+\label{sec:claim-word}
+
+RAGTruth provides an especially relevant experimental setting because it contains word-level hallucination annotations. Such data permit researchers to ask whether uncertainty rises exactly where hallucinations occur rather than merely comparing entire responses \cite{niu2024}.
+
+This distinction is important for practical deployment. A response-level detector can tell a user that an answer is suspicious, but a token- or span-level detector can identify which statement requires verification. RAGTruth's annotations make this type of evaluation possible.
+
+More recent analysis by Snel and Oh suggests that hallucination signals are temporally heterogeneous: the first token within a hallucinated span can be more detectable than subsequent conditional tokens \cite{snel2025}. This finding has significant implications. If the initial hallucinated token contains the strongest signal, a detector that averages uncertainty across an entire sentence may dilute precisely the information needed for early intervention.
+
+\subsection{Entity-Level Evidence and the Danger of Naive Token Scoring}
+\label{sec:entity-level}
+
+Yeh et al.'s HalluEntity benchmark provides an important counterpoint. Evaluating uncertainty-based detection across 17 modern LLMs, the authors found that approaches relying on individual token probabilities tend to over-predict hallucinations, whereas context-aware methods perform better, although they remain imperfect \cite{yeh2025}.
+
+This result demonstrates why token-level uncertainty should not be equated with hallucination probability. Entities often contain rare names, dates, locations, and specialized terminology. Such tokens can naturally have unusual probability distributions even when the underlying entity is factual.
+
+The implication is that token-level uncertainty is informative but linguistically underdetermined. A useful detector must distinguish uncertainty arising from lexical rarity, syntactic choice, discourse planning, and genuine uncertainty about factual content.
+
+% ============================================================
+\section{Comparative Perspective: Token, Sequence, Semantic and Internal-State Uncertainty}
+\label{sec:comparative}
+% ============================================================
+
+The current literature can be organized into four broad levels of uncertainty.
+
+\begin{table}[htbp]
+\centering
+\caption{Comparison of token, sequence, semantic, and internal-state uncertainty.}
+\label{tab:uncertainty}
+\begin{tabular}{p{0.15\textwidth} p{0.24\textwidth} p{0.27\textwidth} p{0.27\textwidth}}
+\toprule
+\textbf{Level} &
+\textbf{Representative Signal} &
+\textbf{Main Strength} &
+\textbf{Main Limitation} \\
+\midrule
+Token &
+NLL, entropy, log probability &
+Cheap, local, potentially real-time &
+Sensitive to lexical and syntactic effects \\
+
+Sequence &
+Mean/sum token likelihood &
+Simple global confidence &
+Loses localization; length-sensitive \\
+
+Semantic &
+Semantic entropy, self-consistency &
+Better reflects uncertainty over meaning &
+Requires multiple generations or semantic clustering \\
+
+Internal state &
+EigenScore and related representations &
+Preserves dense semantic information &
+Requires model access and can be computationally expensive \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+As shown in Table~\ref{tab:uncertainty}, token-level methods are attractive because they are computationally efficient and naturally aligned with autoregressive decoding. In contrast, semantic entropy and self-consistency methods generally require multiple candidate generations.
+
+SelfCheckGPT, for example, detects hallucinations by measuring disagreement among sampled responses and can operate without access to token probabilities, making it applicable to black-box systems \cite{manakul2023}.
+
+Internal-state approaches offer another alternative. INSIDE uses the model's internal representations and an EigenScore measure to assess semantic consistency, arguing that information discarded during token decoding can remain available in hidden states \cite{chen2024}.
+
+The emerging evidence therefore suggests that no single uncertainty level is universally sufficient. A promising architecture may combine token, sequence, semantic, and internal-state signals while also incorporating contextual information such as retrieved evidence, entity type, position, and discourse structure.
+
+% ============================================================
+\section{Current Approaches and Developments}
+\label{sec:current}
+% ============================================================
+
+\subsection{Self-Consistency and Sampling}
+\label{sec:self-consistency}
+
+SelfCheckGPT established an important black-box alternative to token probabilities. Its central premise is that a model with reliable knowledge tends to generate mutually consistent answers, whereas hallucinated claims may vary or contradict each other under stochastic sampling \cite{manakul2023}.
+
+Sampling-based methods can therefore estimate epistemic instability rather than local token uncertainty. Their main disadvantage is computational cost: multiple generations are required for a single response.
+
+\subsection{Semantic Entropy}
+\label{sec:semantic-entropy-current}
+
+Semantic entropy directly addresses the mismatch between linguistic form and meaning. If ten generations use different words but convey the same answer, token-level entropy can incorrectly suggest high uncertainty while semantic entropy remains low. Conversely, if generations express incompatible answers, semantic entropy rises.
+
+Farquhar et al. demonstrated that this semantic approach can detect confabulation without task-specific training and with strong generalization \cite{farquhar2024}.
+
+\subsection{Token-Level Uncertainty Quantification}
+\label{sec:token-quantification}
+
+Fadeeva et al. demonstrate how token-level uncertainty can be refined to become more sensitive to factual content. Their Claim-Conditioned Probability (CCP) formulation aims to distinguish uncertainty arising from the factual content of a claim from uncertainty associated with its linguistic realization \cite{fadeeva2024}.
+
+This suggests a broader research principle:
+
+\begin{quote}
+The predictive value of token uncertainty increases when token probabilities are conditioned on the proposition being evaluated.
+\end{quote}
+
+\subsection{Calibration and Confidence Estimation}
+\label{sec:calibration}
+
+A raw probability is only useful if its relationship to empirical correctness is stable. Calibration methods can transform an uncalibrated uncertainty score into a better estimate of factual reliability. Kapoor et al. proposed calibration tuning to teach LLMs to output better-calibrated confidence estimates, demonstrating improvements across question-answering tasks \cite{kapoor2024}.
+
+Calibration is especially important for deployment because the desired output is often not simply a ranking of suspicious tokens but a probability such as
+
+\begin{equation}
+P(\mathrm{hallucination}\mid\mathbf{x}),
+\label{eq:hallucination-probability}
+\end{equation}
+
+where $\mathbf{x}$ represents the relevant model output and contextual information.
+
+A detector that ranks examples correctly but produces badly calibrated probabilities may be unsuitable for automated escalation or human-review thresholds.
+
+\subsection{Uncertainty During Reasoning}
+\label{sec:reasoning}
+
+Recent research extends token-level uncertainty beyond ordinary factual answers into multi-step reasoning. Zhang et al. proposed token-level uncertainty estimation using low-rank random weight perturbations, then aggregated token uncertainties into sequence-level measures \cite{zhang2025}.
+
+Their experiments on mathematical reasoning found relationships between the resulting uncertainty metrics and answer correctness.
+
+This direction is important because hallucinations may originate during intermediate reasoning rather than at the final answer. Monitoring uncertainty throughout the generation trajectory could permit intervention before an erroneous conclusion becomes entrenched.
+
+% ============================================================
+\section{Research Challenges and Limitations}
+\label{sec:limitations}
+% ============================================================
+
+\subsection{Uncertainty Is Not Truth}
+\label{sec:not-truth}
+
+The most fundamental limitation is conceptual. Token probability is a model-internal predictive statistic, not an objective probability that a proposition is true.
+
+An LLM may confidently generate a false statement because the false association is strongly represented in its training distribution. TruthfulQA illustrates this broader problem: models can reproduce widespread misconceptions despite their language-modeling capabilities \cite{lin2022}.
+
+Therefore, uncertainty and truth may correlate, but they are not identical.
+
+\subsection{Lexical Confounding}
+\label{sec:lexical-confounding}
+
+Proper names, technical terms, numbers, and rare words can produce unusual token distributions without being hallucinated. This explains why naive token-level methods can over-predict hallucinations at the entity level \cite{yeh2025}.
+
+A robust detector must therefore model the expected uncertainty of a token given its linguistic role. The uncertainty of a rare surname should not be interpreted in the same way as uncertainty about the value of a factual predicate.
+
+\subsection{Tokenization Effects}
+\label{sec:tokenization}
+
+LLMs operate on subword tokens rather than human-interpretable words or atomic facts. A single entity may correspond to several tokens, and one token may contribute to multiple semantic structures. Consequently, the boundary between a ``hallucinated token'' and a factual token is not always well-defined.
+
+This makes token-level evaluation vulnerable to alignment problems between tokenization and human factuality annotations.
+
+\subsection{Context Dependence}
+\label{sec:context-dependence}
+
+The same token may be reliable in one context and unreliable in another. For example, a person's name may be factual when correctly associated with a biography but hallucinated when attached to a fabricated institution.
+
+Thus, token uncertainty should be interpreted jointly with:
+
+\begin{itemize}
+    \item preceding context;
+    \item entity type;
+    \item syntactic dependency;
+    \item discourse position;
+    \item retrieved evidence;
+    \item source attribution;
+    \item surrounding claim structure.
+\end{itemize}
+
+\subsection{Calibration Drift}
+\label{sec:calibration-drift}
+
+Token distributions differ across models, decoding temperatures, model families, domains, and languages. A threshold that works on one model may fail on another. Calibration must therefore be evaluated under distribution shift rather than only on an in-domain validation set.
+
+This challenge parallels broader neural-network calibration findings \cite{guo2017}.
+
+\subsection{False Negatives and Confident Hallucinations}
+\label{sec:false-negatives}
+
+Perhaps the most important limitation is that hallucinations can be accompanied by low uncertainty. If the model has strongly learned an incorrect association, token-level uncertainty may be low even though the output is false.
+
+Consequently, uncertainty-based detection should be understood primarily as a risk signal, not a complete hallucination detector.
+
+\subsection{Black-Box Accessibility}
+\label{sec:black-box}
+
+Token-level approaches generally require access to log probabilities or logits. Commercial APIs may not expose the full distribution. SelfCheckGPT addresses this limitation by relying only on sampled text, while newer black-box research attempts to exploit small sets of exposed top-token probabilities when available \cite{manakul2023}.
+
+This creates a practical divide between open-weight and closed-source LLM evaluation.
+
+% ============================================================
+\section{Research Gaps and Future Directions}
+\label{sec:future}
+% ============================================================
+
+\subsection{From Token Uncertainty to Claim Uncertainty}
+\label{sec:claim-uncertainty}
+
+The most important research gap is the absence of a universally accepted mapping between token uncertainty and factual-claim uncertainty.
+
+Future systems should explicitly represent a generation as a set of factual claims rather than assuming that tokens are the natural unit of factuality. Token-level uncertainty can then be aggregated conditionally over claim spans.
+
+Claim-conditioned probability provides an important foundation for such systems \cite{fadeeva2024}.
+
+\subsection{Detecting the First Hallucination Token}
+\label{sec:first-token}
+
+The observation that the first hallucinated token may be more detectable than subsequent tokens suggests a promising real-time intervention strategy. Rather than waiting for a complete answer, an LLM-serving system could continuously monitor uncertainty and activate verification when a statistically significant deviation occurs.
+
+A possible local normalization framework is
+
+\begin{equation}
+z_t
+=
+\frac{u_t-\mu_{\mathrm{local}}}
+{\sigma_{\mathrm{local}}},
+\label{eq:local-z}
+\end{equation}
+
+where $u_t$ is token uncertainty and $\mu_{\mathrm{local}}$ and $\sigma_{\mathrm{local}}$ are the local mean and standard deviation estimated from the surrounding generation. A sustained or abrupt spike could trigger retrieval, regeneration, or human review.
+
+Snel and Oh's analysis provides evidence supporting the importance of hallucination onset rather than only hallucination-span averages \cite{snel2025}.
+
+\subsection{Multilevel Uncertainty Architectures}
+\label{sec:multilevel}
+
+Future detectors should combine token, phrase, sentence, entity, and semantic uncertainty. A hierarchical detector could first identify suspicious tokens, aggregate them into spans, reconstruct factual claims, and finally assess semantic disagreement.
+
+Such a design could preserve the efficiency of token-level monitoring while addressing its semantic limitations.
+
+\subsection{Calibration Across Models and Domains}
+\label{sec:cross-model}
+
+Future research should evaluate uncertainty predictors under cross-model and cross-domain transfer. A useful detector should ideally learn a general mapping from uncertainty features to empirical factual reliability while minimizing dependence on model-specific probability scales.
+
+Benchmarking should include model families, sizes, languages, domains, decoding temperatures, and retrieval conditions.
+
+\subsection{Integration with Retrieval-Augmented Generation}
+\label{sec:rag}
+
+RAG does not eliminate hallucinations. RAGTruth demonstrates that LLMs can still generate unsupported or contradictory claims despite access to retrieved material \cite{niu2024}.
+
+This creates an opportunity for uncertainty-aware RAG. Elevated token uncertainty could trigger:
+
+\begin{enumerate}
+    \item additional retrieval;
+    \item retrieval expansion;
+    \item evidence reranking;
+    \item claim verification;
+    \item constrained regeneration;
+    \item refusal when sufficient evidence cannot be established.
+\end{enumerate}
+
+In this architecture, uncertainty becomes an active control signal rather than merely a diagnostic.
+
+\subsection{Multimodal and Multilingual Uncertainty}
+\label{sec:multimodal}
+
+Existing evidence is concentrated heavily on English text. Yet tokenization, morphology, entity structure, and probability calibration differ substantially across languages. Fadeeva et al.'s multilingual experiments are encouraging, but broader multilingual evaluation remains necessary \cite{fadeeva2024}.
+
+The same issue arises in multimodal models, where uncertainty may originate from visual recognition, cross-modal grounding, language generation, or interactions among these components.
+
+\subsection{Causal Understanding}
+\label{sec:causal}
+
+Most current work establishes correlation: high uncertainty is associated with some hallucinations. A deeper question is whether uncertainty causes, precedes, or merely reflects hallucination.
+
+Causal studies could manipulate model uncertainty through controlled interventions, perturbations, retrieval changes, temperature changes, or activation editing and measure whether hallucination rates change accordingly.
+
+Such work would distinguish a genuinely predictive mechanism from a post hoc diagnostic correlate.
+
+% ============================================================
+\section{Proposed Research Framework}
+\label{sec:framework}
+% ============================================================
+
+Based on the literature, a robust empirical study of token-level uncertainty as a hallucination predictor should evaluate the following pipeline.
+
+\subsection{Data}
+\label{sec:framework-data}
+
+A combined benchmark should include:
+
+\begin{itemize}
+    \item HaluEval for broad hallucination recognition;
+    \item FActScore-style atomic factual annotations;
+    \item RAGTruth for word-level retrieval-augmented hallucinations;
+    \item HalluEntity for entity-level hallucinations;
+    \item TruthfulQA for truthfulness and misconception-based failures.
+\end{itemize}
+
+These datasets capture complementary notions of factual reliability.
+
+\subsection{Predictors}
+\label{sec:framework-predictors}
+
+The principal predictors should include:
+
+\begin{enumerate}
+    \item token NLL;
+    \item token entropy;
+    \item top-1/top-2 probability margin;
+    \item local entropy change;
+    \item sequence-average uncertainty;
+    \item maximum uncertainty;
+    \item uncertainty variance;
+    \item claim-conditioned probability;
+    \item semantic entropy;
+    \item hidden-state uncertainty.
+\end{enumerate}
+
+\subsection{Aggregation}
+\label{sec:framework-aggregation}
+
+Instead of relying on a single statistic, uncertainty should be aggregated at multiple scales. Candidate aggregation functions include mean, maximum, upper quantiles, learned attention, temporal derivatives, and sequence models.
+
+\subsection{Evaluation}
+\label{sec:framework-evaluation}
+
+A rigorous evaluation should report:
+
+\begin{itemize}
+    \item AUROC;
+    \item AUPRC;
+    \item F1;
+    \item precision at fixed recall;
+    \item recall at fixed false-positive rate;
+    \item expected calibration error;
+    \item Brier score;
+    \item token-level localization accuracy;
+    \item span-level intersection-over-union;
+    \item claim-level accuracy.
+\end{itemize}
+
+Calibration should be explicitly reported because a detector intended for deployment must provide trustworthy probabilities rather than only rankings.
+
+\subsection{Key Hypotheses}
+\label{sec:hypotheses}
+
+A future empirical study could test five hypotheses:
+
+\begin{enumerate}
+    \item \textbf{H1:} Token-level uncertainty is positively associated with hallucination probability.
+
+    \item \textbf{H2:} Context-aware and claim-conditioned token uncertainty provides stronger hallucination detection than raw token entropy.
+
+    \item \textbf{H3:} The first token of a hallucinated span contains more predictive information than later tokens.
+
+    \item \textbf{H4:} Combining token uncertainty with semantic uncertainty improves detection over either signal alone.
+
+    \item \textbf{H5:} Calibration improves cross-domain transfer of uncertainty-based hallucination detectors.
+\end{enumerate}
+
+This framework converts the general claim that ``uncertain tokens indicate hallucinations'' into a testable research program.
+
+% ============================================================
+\section{Conclusion}
+\label{sec:conclusion}
+% ============================================================
+
+Token-level uncertainty represents one of the most accessible internal signals for assessing the reliability of LLM generation. Because autoregressive models naturally produce probability distributions at every decoding step, uncertainty can be computed without adding another model to the generation pipeline.
+
+Research on token-level probability, claim-conditioned probability, entropy, variance, and token-level reasoning demonstrates that these signals contain meaningful information about factual reliability \cite{fadeeva2024,quevedo2025,zhang2025}.
+
+Nevertheless, the literature does not support the stronger claim that token uncertainty is itself a reliable measure of truth. Semantic equivalence, lexical rarity, tokenization, discourse structure, calibration errors, and confident false associations all weaken a direct interpretation of token probability as factual confidence. HalluEntity's finding that individual-token approaches can over-predict hallucinated entities is particularly important in this respect \cite{yeh2025}.
+
+The most defensible conclusion is therefore that token-level uncertainty is a useful but incomplete predictor of hallucinations. Its predictive value is maximized when token-level information is conditioned on claims and context, aggregated across meaningful spans, calibrated against empirical correctness, and combined with semantic or internal-state uncertainty.
+
+The field is consequently moving from a simplistic question---``Is this token uncertain?''---toward a more meaningful question---``Does the model exhibit uncertainty about the factual proposition represented by this span, and is that uncertainty calibrated to actual error?'' Future systems should exploit token-level signals for inexpensive, real-time monitoring while incorporating semantic verification and retrieval when uncertainty indicates elevated risk.
+
+% ============================================================
+% References
+% ============================================================
+
+\begin{thebibliography}{20}
+
+\bibitem{chen2024}
+C. Chen, K. Liu, Z. Chen, Y. Gu, Y. Wu, M. Tao, Z. Fu, and J. Ye,
+``INSIDE: LLMs' Internal States Retain the Power of Hallucination Detection,''
+International Conference on Learning Representations (ICLR), 2024.
+arXiv:2402.03744.
+
+\bibitem{farquhar2024}
+S. Farquhar, J. Kossen, L. Kuhn, and Y. Gal,
+``Detecting hallucinations in large language models using semantic entropy,''
+\textit{Nature}, vol. 630, no. 8017, pp. 625--630, 2024.
+doi:10.1038/s41586-024-07421-0.
+
+\bibitem{fadeeva2024}
+E. Fadeeva, A. Rubashevskii, A. Shelmanov, S. Petrakov, H. Li,
+H. Mubarak, E. Tsymbalov, G. Kuzmin, A. Panchenko, T. Baldwin,
+P. Nakov, and M. Panov,
+``Fact-Checking the Output of Large Language Models via Token-Level Uncertainty Quantification,''
+\textit{Findings of the Association for Computational Linguistics: ACL 2024},
+pp. 9367--9385, 2024.
+doi:10.18653/v1/2024.findings-acl.558.
+arXiv:2403.04696.
+
+\bibitem{guo2017}
+C. Guo, G. Pleiss, Y. Sun, and K. Q. Weinberger,
+``On Calibration of Modern Neural Networks,''
+in \textit{Proceedings of the 34th International Conference on Machine Learning},
+PMLR 70, pp. 1321--1330, 2017.
+arXiv:1706.04599.
+
+\bibitem{huang2024}
+L. Huang, W. Yu, W. Ma, W. Zhong, Z. Feng, H. Wang, Q. Chen,
+W. Peng, X. Feng, B. Qin, and T. Liu,
+``A Survey on Hallucination in Large Language Models: Principles, Taxonomy,
+Challenges, and Open Questions,''
+\textit{ACM Transactions on Information Systems}, 2024.
+doi:10.1145/3703155.
+arXiv:2311.05232.
+
+\bibitem{kadavath2022}
+S. Kadavath, T. Conerly, A. Askell, H. Henighan, D. Drain, E. Perez, et al.,
+``Language Models (Mostly) Know What They Know,''
+arXiv:2207.05221, 2022.
+
+\bibitem{kapoor2024}
+S. Kapoor, N. Gruver, M. Roberts, A. Pal, S. Dooley, M. Goldblum,
+and A. G. Wilson,
+``Calibration-Tuning: Teaching Large Language Models to Know What They Don't Know,''
+in \textit{Proceedings of the 1st Workshop on Uncertainty-Aware NLP},
+pp. 1--14, 2024.
+doi:10.18653/v1/2024.uncertainlp-1.1.
+
+\bibitem{kuhn2023}
+L. Kuhn, Y. Gal, and S. Farquhar,
+``Semantic Uncertainty: Linguistic Invariances for Uncertainty Estimation
+in Natural Language Generation,''
+International Conference on Learning Representations (ICLR), 2023.
+arXiv:2302.09664.
+
+\bibitem{li2023}
+J. Li, X. Cheng, X. Zhao, J.-Y. Nie, and J.-R. Wen,
+``HaluEval: A Large-Scale Hallucination Evaluation Benchmark for Large Language Models,''
+in \textit{Proceedings of EMNLP 2023},
+pp. 6449--6464, 2023.
+doi:10.18653/v1/2023.emnlp-main.397.
+arXiv:2305.11747.
+
+\bibitem{lin2022}
+S. Lin, J. Hilton, and O. Evans,
+``TruthfulQA: Measuring How Models Mimic Human Falsehoods,''
+in \textit{Proceedings of ACL 2022},
+pp. 3214--3252, 2022.
+doi:10.18653/v1/2022.acl-long.229.
+
+\bibitem{manakul2023}
+P. Manakul, A. Liusie, and M. J. F. Gales,
+``SelfCheckGPT: Zero-Resource Black-Box Hallucination Detection for Generative Large Language Models,''
+in \textit{Proceedings of EMNLP 2023},
+pp. 9004--9017, 2023.
+doi:10.18653/v1/2023.emnlp-main.557.
+
+\bibitem{min2023}
+S. Min, K. Krishna, X. Lyu, M. Lewis, W.-t. Yih, P. Koh, M. Iyyer,
+L. Zettlemoyer, and H. Hajishirzi,
+``FActScore: Fine-grained Atomic Evaluation of Factual Precision in Long Form Text Generation,''
+in \textit{Proceedings of EMNLP 2023},
+pp. 12076--12100, 2023.
+doi:10.18653/v1/2023.emnlp-main.741.
+arXiv:2305.14251.
+
+\bibitem{niu2024}
+C. Niu, Y. Wu, J. Zhu, S. Xu, K. Shum, R. Zhong, J. Song, and T. Zhang,
+``RAGTruth: A Hallucination Corpus for Developing Trustworthy Retrieval-Augmented Language Models,''
+in \textit{Proceedings of ACL 2024}, Volume 1: Long Papers,
+pp. 10862--10878, 2024.
+doi:10.18653/v1/2024.acl-long.585.
+arXiv:2401.00396.
+
+\bibitem{ouyang2022}
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. L. Wainwright, P. Mishkin,
+C. Zhang, S. Agarwal, K. Slama, A. Ray, J. Schulman, J. Hilton,
+F. Kelton, L. Miller, M. Simens, A. Askell, P. Welinder,
+P. F. Christiano, J. Leike, and R. Lowe,
+``Training Language Models to Follow Instructions with Human Feedback,''
+arXiv:2203.02155, 2022.
+doi:10.48550/arXiv.2203.02155.
+
+\bibitem{quevedo2025}
+E. Quevedo, J. Y. Salazar, R. Koerner, P. Rivas, and T. Cerny,
+``Detecting Hallucinations in Large Language Model Generation:
+A Token Probability Approach,''
+in \textit{Artificial Intelligence and Applications---26th International Conference,
+ICAI 2024, Revised Selected Papers},
+Communications in Computer and Information Science, vol. 2252,
+pp. 154--173, Springer, 2025.
+doi:10.1007/978-3-031-86623-4\_13.
+arXiv:2405.19648.
+
+\bibitem{snel2025}
+J. Snel and S. J. Oh,
+``First Hallucination Tokens Are Different from Conditional Ones,''
+arXiv:2507.20836, 2025.
+
+\bibitem{yeh2025}
+M.-H. Yeh, M. Kamachee, S. Park, and Y. Li,
+``HalluEntity: Benchmarking and Understanding Entity-Level Hallucination Detection,''
+\textit{Transactions on Machine Learning Research}, 2025.
+arXiv:2502.11948.
+
+\bibitem{zhang2025}
+T. Zhang, H. Shi, Y. Wang, H. Wang, X. He, Z. Li, H. Chen,
+L. Han, K. Xu, H. Zhang, D. Metaxas, and H. Wang,
+``Token-Level Uncertainty Estimation for Large Language Model Reasoning,''
+arXiv:2505.11737, 2025.
+
+\bibitem{kumar2025}
+K. Kumar,
+``Detecting Token-Level Hallucinations Using Variance Signals:
+A Reference-Free Approach,''
+arXiv:2507.04137, 2025.
+
+\bibitem{moslonka2026}
+C. Moslonka, H. Randrianarivo, A. Garnier, and E. Malherbe,
+``Learned Hallucination Detection in Black-Box LLMs Using Token-Level
+Entropy Production Rate,''
+in \textit{Advances in Information Retrieval},
+Lecture Notes in Computer Science, vol. 16483, pp. 115--130,
+Springer, 2026.
+doi:10.1007/978-3-032-21289-4\_8.
+arXiv:2509.04492.
+
+\end{thebibliography}
+
+\end{document}
